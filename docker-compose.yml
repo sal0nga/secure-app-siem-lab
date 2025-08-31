@@ -1,0 +1,15 @@
+version: "3.9"
+
+# Compose project skeleton for the lab. No services in Phase 0.
+# Networks and volumes are declared so later phases can attach without churn.
+name: secure-app-siem-lab
+
+volumes:
+  postgres-data: {}
+  keycloak-data: {}
+  opensearch-data: {}
+  evidence-data: {}
+
+networks:
+  app-net: {}     # app + backing services
+  siem-net: {}    # SIEM/monitoring plane

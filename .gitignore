@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Local env
+.env
+.env.*
+
+# Evidence heavyweight artifacts (commit notes/diagrams instead)
+evidence/**/*.pcap
+evidence/**/*.zip
+evidence/**/*.sarif
+evidence/**/*.har
+evidence/**/*.log
+evidence/**/*.jsonl
