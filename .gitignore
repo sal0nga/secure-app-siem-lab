@@ -19,3 +19,8 @@ evidence/**/*.sarif
 evidence/**/*.har
 evidence/**/*.log
 evidence/**/*.jsonl
+
+# Phase 01
+certs/
+logs/
+.venv

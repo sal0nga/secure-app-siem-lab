@@ -1,15 +1,75 @@
-version: "3.9"
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on: [app]
+    ports:
+      - "8080:80"
+      - "8443:443"     # ← use 8443 on the host
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - ./logs/nginx:/var/log/nginx
+    networks: [frontnet, backnet]
 
-# Compose project skeleton for the lab. No services in Phase 0.
-# Networks and volumes are declared so later phases can attach without churn.
-name: secure-app-siem-lab
+  app:
+    build:
+      context: ./app
+      args:
+        # If this default tag doesn't resolve for you, rebuild with:
+        #   --build-arg PYTHON_BASE=python:3.11-slim
+        PYTHON_BASE: registry.access.redhat.com/ubi9/python-311
+    env_file: .env
+    command: >
+      gunicorn -b 0.0.0.0:8000
+      --workers=${GUNICORN_WORKERS:-2}
+      --timeout=${GUNICORN_TIMEOUT:-30}
+      --access-logfile - --error-logfile -
+      wsgi:app
+    volumes:
+      - ./logs/app:/var/log/app
+    expose:
+      - "8000"
+    depends_on:
+      - db
+    networks: [backnet]
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backnet]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    env_file: .env
+    command: start-dev --http-port=8080 --hostname-strict=false
+    expose:
+      - "8080"
+    depends_on:
+      - db
+    networks: [backnet]
+
+  fluent-bit:
+    image: cr.fluentbit.io/fluent/fluent-bit:2.2
+    command: -c /fluent-bit/etc/fluent-bit.conf
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - ./logs:/logs
+    networks: [backnet]
 
 volumes:
-  postgres-data: {}
-  keycloak-data: {}
-  opensearch-data: {}
-  evidence-data: {}
+  pgdata:
 
 networks:
-  app-net: {}     # app + backing services
-  siem-net: {}    # SIEM/monitoring plane
+  frontnet:
+  backnet:
