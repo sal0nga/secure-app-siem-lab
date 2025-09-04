@@ -5,12 +5,27 @@
 __pycache__/
 *.pyc
 
+# Python/dev caches
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+
 # Node
 node_modules/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.code-workspace
 
 # Local env
 .env
 .env.*
+.envrc
+.python-version
 
 # Evidence heavyweight artifacts (commit notes/diagrams instead)
 evidence/**/*.pcap
@@ -24,3 +39,17 @@ evidence/**/*.jsonl
 certs/
 logs/
 .venv
+
+# TLS keys/certs (dev) — never commit private keys
+**/*.pem
+**/*.key
+**/*.crt
+
+# Build artifacts
+dist/
+build/
+
+# Root-level archives produced by tooling (keep large evidence files under evidence/)
+/*.tgz
+/*.tar.gz
+/*.zip
