@@ -1,0 +1,96 @@
+name: ci-security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: Pytest (unit)
+    runs-on: ubuntu-latest
+
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: 1
+      PYTHONDONTWRITEBYTECODE: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Run tests
+        run: |
+          # Skip integration tests by default (we'll wire DB/containers later)
+          pytest -m "not integration" --maxfail=1 --disable-warnings
+
+  semgrep:
+    name: Semgrep (High/Critical gate)
+    runs-on: ubuntu-latest
+    needs: [pytest]
+
+    # Run Semgrep from the official container
+    container:
+      image: semgrep/semgrep:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq (apt or apk)
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -y && apt-get install -y jq;
+          else
+            apk add --no-cache jq;
+          fi
+
+      - name: Semgrep scan → JSON
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/python \
+            --json --output semgrep.json \
+            --timeout 180
+
+      - name: Fail CI if High/Critical present
+        run: |
+          count=$(jq '[.results[] | .extra.severity | ascii_upcase | select(.=="ERROR" or .=="HIGH" or .=="CRITICAL")] | length' semgrep.json)
+          echo "High/Critical findings: $count"
+          if [ "$count" -gt 0 ]; then
+            echo "::error::Semgrep found High/Critical findings";
+            exit 1;
+          fi
+
+      - name: Semgrep scan → SARIF (non-blocking)
+        if: always()
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/python \
+            --sarif --output semgrep.sarif || true
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif

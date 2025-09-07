@@ -10,10 +10,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # System deps (psycopg2 needs libpq; UBI images already have basics)
 # If using python:3.11-slim instead, you may need: apt-get update && apt-get install -y build-essential libpq-dev
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy requirements from project root (compose build context should be repo root)
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-COPY . .
+# Copy only the app source from the repository into the image workdir
+COPY app ./app
+COPY wsgi.py ./wsgi.py
 
 # Default port for gunicorn binding in compose
 EXPOSE 8000

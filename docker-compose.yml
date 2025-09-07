@@ -13,7 +13,8 @@ services:
 
   app:
     build:
-      context: ./app
+      context: .
+      dockerfile: app/Dockerfile
       args:
         # If this default tag doesn't resolve for you, rebuild with:
         #   --build-arg PYTHON_BASE=python:3.11-slim
