@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "App Security Log v1",
+  "type": "object",
+  "required": ["ts","event","trace_id","src_ip","outcome","path","method","status","resp_bytes","roles","app_version"],
+  "properties": {
+    "ts": { "type": "string", "format": "date-time" },
+    "event": { "type": "string" },
+    "trace_id": { "type": ["string","null"] },
+    "user": { "type": ["string","null"] },
+    "sub": { "type": ["string","null"] },
+    "session_id": { "type": ["string","null"] },
+    "src_ip": { "type": ["string","null"] },
+    "outcome": { "type": "string", "enum": ["success","allowed","denied","failure","error"] },
+    "reason": { "type": ["string","null"] },
+    "path": { "type": "string" },
+    "method": { "type": "string" },
+    "status": { "type": "integer" },
+    "resp_bytes": { "type": "integer", "minimum": 0 },
+    "roles": { "type": "array", "items": { "type": "string" } },
+    "mfa": { "type": ["boolean","null"] },
+    "authn_client": { "type": ["string","null"] },
+    "app_version": { "type": "string" }
+  },
+  "additionalProperties": true
+}
