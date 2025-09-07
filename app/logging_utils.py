@@ -3,7 +3,20 @@ import json, os
 from datetime import datetime, timezone
 from flask import request, g
 
+
 APP_VERSION = os.getenv("APP_VERSION", "0.3.0")
+
+DEFAULT_LARGE_RESP_BYTES = 65536  # 64 KiB default
+def _get_large_resp_bytes() -> int:
+    try:
+        return int(os.getenv("LOG_LARGE_RESP_BYTES", str(DEFAULT_LARGE_RESP_BYTES)))
+    except (TypeError, ValueError):
+        return DEFAULT_LARGE_RESP_BYTES
+
+def is_large_response(n: int | None) -> bool:
+    """Return True if response length exceeds LOG_LARGE_RESP_BYTES."""
+    threshold = _get_large_resp_bytes()
+    return n is not None and n > threshold
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
