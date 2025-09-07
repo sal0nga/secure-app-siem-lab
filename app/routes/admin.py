@@ -25,18 +25,62 @@ def do_admin_thing():
 # Denials are handled by the decorator’s 403; add an after_request to log them
 @bp.after_request
 def log_denials(resp):
-    if request.method == "POST" and request.path.rstrip("/") == "/admin" and resp.status_code == 403:
+    if request.method == "POST" and resp.status_code == 403:
+        path = request.path.rstrip("/")
+        if path in ("/admin", "/admin/roles"):
+            event = "admin_post" if path == "/admin" else "role_change"
+            log_event(
+                event,
+                outcome="denied",
+                reason="missing_role",
+                status=resp.status_code,
+                resp_bytes=len(resp.get_data()),
+                user=getattr(g, "user", None),
+                sub=getattr(g, "sub", None),
+                session_id=getattr(g, "session_id", None),
+                roles=current_roles(),
+                mfa=getattr(g, "mfa", None),
+                authn_error=getattr(g, "authn_error", None),
+            )
+    return resp
+
+
+# New admin-only route to log role changes
+@bp.post("/roles")
+@require_roles(["admin"])
+def change_roles():
+    data = request.get_json(silent=True) or {}
+    target_sub = data.get("target_sub")
+    add_roles = data.get("add_roles", []) or []
+    remove_roles = data.get("remove_roles", []) or []
+
+    if not target_sub:
+        out = make_response(jsonify(error="bad_request", missing="target_sub"), 400)
         log_event(
-            "admin_post",
-            outcome="denied",
-            reason="missing_role",
-            status=resp.status_code,
-            resp_bytes=len(resp.get_data()),
+            "role_change",
+            outcome="failure",
+            reason="missing_target_sub",
+            status=400,
+            resp_bytes=len(out.get_data()),
             user=getattr(g, "user", None),
             sub=getattr(g, "sub", None),
             session_id=getattr(g, "session_id", None),
             roles=current_roles(),
-            mfa=getattr(g, "mfa", None),
-            authn_error=getattr(g, "authn_error", None),
         )
-    return resp
+        return out
+
+    out = make_response(jsonify(accepted=True), 202)
+    log_event(
+        "role_change",
+        outcome="allowed",
+        status=202,
+        resp_bytes=len(out.get_data()),
+        user=getattr(g, "user", None),
+        sub=getattr(g, "sub", None),
+        session_id=getattr(g, "session_id", None),
+        roles=current_roles(),
+        target_sub=target_sub,
+        add_roles=add_roles,
+        remove_roles=remove_roles,
+    )
+    return out
