@@ -110,10 +110,7 @@ jobs:
 
       - name: Build app image (local)
         run: |
-          # If your Dockerfile needs only app/, keep this:
-          docker build -t app:ci-${{ github.sha }} -f app/Dockerfile app
-          # If your Dockerfile expects files from repo root, use:
-          # docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
+          docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
 
       - name: Trivy scan (gate on High/Critical)
         uses: aquasecurity/trivy-action@0.28.0
@@ -143,7 +140,7 @@ jobs:
 
       - name: Build app image (local)
         run: |
-          docker build -t app:ci-${{ github.sha }} -f app/Dockerfile app
+          docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
 
       - name: Detect app port from Dockerfile (fallback 8000)
         id: detect_port
