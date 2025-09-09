@@ -10,11 +10,13 @@ from app import create_app
 
 @pytest.fixture(scope="session", autouse=True)
 def _env():
-    # Loosen verification for local tests; we inject tokens manually.
+    # Test env: enable dev verification (HS256) and disable JWKS path.
     os.environ.setdefault("OIDC_VERIFY", "false")
-    os.environ.setdefault("OIDC_AUDIENCE", "test-client")
-    os.environ.setdefault("OIDC_ISSUER", "https://example.test/realms/test")
-    os.environ.setdefault("OIDC_JWKS_URL", f"{os.environ['OIDC_ISSUER']}/protocol/openid-connect/certs")
+    os.environ.setdefault("OIDC_DEV_HS256_SECRET", "test-secret")
+    # Do not enforce audience/issuer in tests unless explicitly set.
+    os.environ.pop("OIDC_JWKS_URL", None)
+    os.environ.pop("OIDC_AUDIENCE", None)
+    os.environ.pop("OIDC_ISSUER", None)
     yield
 
 @pytest.fixture()
