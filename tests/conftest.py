@@ -1,6 +1,11 @@
 # tests/conftest.py
 import os
 import pytest
+import sys
+from pathlib import Path
+
+# Ensure project root is importable for 'app' when tests run from any cwd
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import create_app
 
 @pytest.fixture(scope="session", autouse=True)
