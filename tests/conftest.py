@@ -4,20 +4,19 @@ import pytest
 import sys
 from pathlib import Path
 
-# Ensure project root is importable for 'app' when tests run from any cwd
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app import create_app
+# --- Force test env BEFORE importing the app (CI-safe) ---
+os.environ["OIDC_VERIFY"] = "false"
+os.environ["OIDC_DEV_HS256_SECRET"] = os.environ.get("OIDC_DEV_HS256_SECRET", "test-secret")
+# Avoid prod verification path & mismatches during tests
+os.environ.pop("OIDC_JWKS_URL", None)
+os.environ.pop("OIDC_AUDIENCE", None)
+os.environ.pop("OIDC_ISSUER", None)
+# ---------------------------------------------------------
 
-@pytest.fixture(scope="session", autouse=True)
-def _env():
-    # Test env: enable dev verification (HS256) and disable JWKS path.
-    os.environ.setdefault("OIDC_VERIFY", "false")
-    os.environ.setdefault("OIDC_DEV_HS256_SECRET", "test-secret")
-    # Do not enforce audience/issuer in tests unless explicitly set.
-    os.environ.pop("OIDC_JWKS_URL", None)
-    os.environ.pop("OIDC_AUDIENCE", None)
-    os.environ.pop("OIDC_ISSUER", None)
-    yield
+# Ensure project root is importable for 'app'
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app import create_app  # import AFTER env is set
 
 @pytest.fixture()
 def app():
