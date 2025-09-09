@@ -131,3 +131,80 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy.sarif'
+
+  zap_baseline:
+    name: "ZAP Baseline (fail on High)"
+    runs-on: ubuntu-latest
+    needs: [pytest, semgrep, trivy]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build app image (local)
+        run: |
+          docker build -t app:ci-${{ github.sha }} -f app/Dockerfile app
+
+      - name: Detect app port from Dockerfile (fallback 8000)
+        id: detect_port
+        run: |
+          PORT=$(awk '/^EXPOSE/{for(i=2;i<=NF;i++) if ($i ~ /^[0-9]+$/){print $i; exit}}' app/Dockerfile)
+          if [ -z "$PORT" ]; then PORT=8000; fi
+          echo "APP_PORT=$PORT" >> "$GITHUB_ENV"
+
+      - name: Run app container
+        run: |
+          docker rm -f app-ci >/dev/null 2>&1 || true
+          docker run -d --name app-ci -p 127.0.0.1:${APP_PORT}:${APP_PORT} app:ci-${{ github.sha }}
+
+      - name: Wait for health endpoint
+        run: |
+          for i in {1..30}; do
+            if curl -fsS "http://127.0.0.1:${APP_PORT}/healthz" >/dev/null; then
+              echo "App is healthy"; exit 0;
+            fi
+            sleep 2;
+          done
+          echo "App did not become healthy in time";
+          docker logs app-ci || true;
+          exit 1
+
+      - name: Install jq
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: ZAP Baseline (passive DAST)
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: "http://127.0.0.1/${{ env.APP_PORT }}/"
+          fail_action: false            # we'll control fail with JSON parsing below
+          allow_issue_writing: false    # don't open GitHub issues
+          cmd_options: "-J zap.json -r zap.html -a -m 1"
+          artifact_name: "zap_baseline"
+
+      - name: Gate on High risk alerts (JSON)
+        run: |
+          # Count High risk alerts in the JSON report
+          if [ ! -f zap.json ]; then
+            echo "zap.json not found; check ZAP step output";
+            exit 2;
+          fi
+          HIGH_COUNT=$(jq '[.site[]?.alerts[]? | select((.riskcode=="3") or (.riskdesc|test("^High")))] | length' zap.json)
+          echo "High risk alerts: ${HIGH_COUNT}"
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "::error::ZAP found High risk alerts";
+            exit 1;
+          fi
+
+      - name: Upload ZAP artifacts (HTML+JSON)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: |
+            zap.html
+            zap.json
+
+      - name: Stop app container
+        if: always()
+        run: |
+          docker rm -f app-ci >/dev/null 2>&1 || true
