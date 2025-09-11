@@ -215,11 +215,12 @@ jobs:
       - name: ZAP Baseline (passive DAST via docker run)
         if: ${{ always() && steps.build.outcome == 'success' && steps.wait_health.outcome == 'success' }}
         run: |
-          docker run --rm \
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          docker run -rm \
             --network host \
             --add-host app.local:127.0.0.1 \
             -v "$PWD:/zap/wrk:rw" \
-            owasp/zap2docker-stable \
+            ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
               -t "https://app.local:${APP_PORT}/" \
               -J zap.json \
