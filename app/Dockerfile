@@ -22,10 +22,12 @@ COPY wsgi.py ./wsgi.py
 ENV PORT=8443
 EXPOSE 8443
 
- # Prepare app & certs dirs and switch to a non-root user for runtime (satisfies Semgrep)
+# Prepare app & certs dirs as root, then drop to non-root for runtime (satisfies Semgrep)
+USER 0
 RUN mkdir -p /opt/app /opt/certs \
     && chown -R 1001:0 /opt/app /opt/certs \
     && chmod -R g=u /opt/app /opt/certs
 USER 1001
+
 CMD ["sh","-c","exec python -m gunicorn -k gthread --threads ${GTHREADS:-4} --workers ${GWORKERS:-2} --timeout ${GTIMEOUT:-60} --bind 0.0.0.0:${PORT} --keyfile /opt/certs/dev.key --certfile /opt/certs/dev.crt wsgi:app"]
 # Gunicorn command is provided in docker-compose.yml

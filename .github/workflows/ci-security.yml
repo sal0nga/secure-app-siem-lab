@@ -93,10 +93,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build app image (local)
+        id: build
         run: |
           docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
 
       - name: Trivy scan (report-only)
+        if: ${{ always() && steps.build.outcome == 'success' }}
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: 'app:ci-${{ github.sha }}'
@@ -108,16 +110,17 @@ jobs:
           exit-code: '0'  # report-only; do not fail CI
 
       - name: Upload Trivy SARIF to GitHub Security
-        if: always()
+        if: ${{ always() && hashFiles('trivy.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy.sarif'
 
       - name: Setup Trivy CLI (for table summary)
+        if: ${{ always() && steps.build.outcome == 'success' }}
         uses: aquasecurity/setup-trivy@v0.2.1
       
       - name: Trivy (summarize findings as table)
-        if: always()
+        if: ${{ always() && steps.build.outcome == 'success' }}
         run: |
           trivy image \
           --severity HIGH,CRITICAL \
@@ -126,14 +129,14 @@ jobs:
           --format table app:ci-${{ github.sha }} | tee trivy-table.txt
 
       - name: Upload Trivy table
-        if: always()
+        if: ${{ always() && hashFiles('trivy-table.txt') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: trivy-table
           path: trivy-table.txt
 
       - name: Upload Trivy SARIF (keep a copy)
-        if: always()
+        if: ${{ always() && hashFiles('trivy.sarif') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: trivy-sarif
@@ -150,6 +153,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build app image (local)
+        id: build
         run: |
           docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
 
@@ -161,6 +165,7 @@ jobs:
           echo "APP_PORT=$PORT" >> "$GITHUB_ENV"
 
       - name: Generate self-signed TLS cert for app.local
+        if: ${{ always() && steps.build.outcome == 'success' }}
         run: |
           mkdir -p ci-certs
           openssl req -x509 -newkey rsa:2048 -nodes \
@@ -173,6 +178,7 @@ jobs:
           ls -l ci-certs
 
       - name: Run app container
+        if: ${{ always() && steps.build.outcome == 'success' }}
         run: |
           docker rm -f app-ci >/dev/null 2>&1 || true
           docker run -d --name app-ci \
@@ -182,12 +188,15 @@ jobs:
             app:ci-${{ github.sha }}
 
       - name: Map app.local to localhost (runner)
+        if: ${{ always() && steps.build.outcome == 'success' }}
         run: |
           if ! grep -q "^127.0.0.1[[:space:]]\+app.local" /etc/hosts; then
             echo "127.0.0.1 app.local" | sudo tee -a /etc/hosts
           fi
 
       - name: Wait for health endpoint (HTTPS)
+        id: wait_health
+        if: ${{ always() && steps.build.outcome == 'success' }}
         run: |
           for i in {1..30}; do
             if curl -ksSf --resolve app.local:${APP_PORT}:127.0.0.1 "https://app.local:${APP_PORT}/healthz" >/dev/null; then
@@ -200,9 +209,11 @@ jobs:
           exit 1
 
       - name: Install jq
+        if: ${{ always() && steps.build.outcome == 'success' }}
         run: sudo apt-get update -y && sudo apt-get install -y jq
 
       - name: ZAP Baseline (passive DAST via docker run)
+        if: ${{ always() && steps.build.outcome == 'success' && steps.wait_health.outcome == 'success' }}
         run: |
           docker run --rm \
             --network host \
@@ -217,6 +228,7 @@ jobs:
               -m 1
 
       - name: Gate on High risk alerts (JSON)
+        if: ${{ always() && hashFiles('zap.json') != '' }}
         run: |
           # Count High risk alerts in the JSON report
           if [ ! -f zap.json ]; then
@@ -231,7 +243,7 @@ jobs:
           fi
 
       - name: Upload ZAP artifacts (HTML+JSON)
-        if: always()
+        if: ${{ always() && (hashFiles('zap.html') != '' || hashFiles('zap.json') != '' ) }}
         uses: actions/upload-artifact@v4
         with:
           name: zap-baseline-report
