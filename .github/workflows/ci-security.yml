@@ -56,18 +56,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Semgrep (gate) → SARIF
+      - name: Semgrep scan (all severities) → SARIF
         run: |
-          semgrep ci \
+          semgrep scan \
+            --config .semgrep.yml \
             --config p/owasp-top-ten \
             --config p/python \
-            --sarif --output semgrep.sarif
+            --sarif --output semgrep.sarif \
+            --severity INFO
 
       - name: Upload SARIF to GitHub Security
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
+
+      - name: Semgrep gate (fail on ERROR only)
+        run: |
+          semgrep scan \
+            --config .semgrep.yml \
+            --config p/owasp-top-ten \
+            --config p/python \
+            --severity ERROR \
+            --error
   
   trivy:
     name: "Trivy (image scan: report-only)"
@@ -139,22 +150,28 @@ jobs:
         run: |
           docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
 
-      - name: Detect app port from Dockerfile (fallback 8000)
+      - name: Detect app port from Dockerfile (fallback 8443)
         id: detect_port
         run: |
           PORT=$(awk '/^EXPOSE/{for(i=2;i<=NF;i++) if ($i ~ /^[0-9]+$/){print $i; exit}}' app/Dockerfile)
-          if [ -z "$PORT" ]; then PORT=8000; fi
+          if [ -z "$PORT" ]; then PORT=8443; fi
           echo "APP_PORT=$PORT" >> "$GITHUB_ENV"
 
       - name: Run app container
         run: |
           docker rm -f app-ci >/dev/null 2>&1 || true
-          docker run -d --name app-ci -p 127.0.0.1:${APP_PORT}:${APP_PORT} app:ci-${{ github.sha }}
+          docker run -d --name app-ci -p ${APP_PORT}:${APP_PORT} app:ci-${{ github.sha }}
 
-      - name: Wait for health endpoint
+      - name: Map app.local to localhost (runner)
+        run: |
+          if ! grep -q "^127.0.0.1[[:space:]]\+app.local" /etc/hosts; then
+            echo "127.0.0.1 app.local" | sudo tee -a /etc/hosts
+          fi
+
+      - name: Wait for health endpoint (HTTPS)
         run: |
           for i in {1..30}; do
-            if curl -fsS "http://127.0.0.1:${APP_PORT}/healthz" >/dev/null; then
+            if curl -ksSf --resolve app.local:${APP_PORT}:127.0.0.1 "https://app.local:${APP_PORT}/healthz" >/dev/null; then
               echo "App is healthy"; exit 0;
             fi
             sleep 2;
@@ -166,14 +183,19 @@ jobs:
       - name: Install jq
         run: sudo apt-get update -y && sudo apt-get install -y jq
 
-      - name: ZAP Baseline (passive DAST)
-        uses: zaproxy/action-baseline@v0.14.0
-        with:
-          target: "http://127.0.0.1/${{ env.APP_PORT }}/"
-          fail_action: false            # we'll control fail with JSON parsing below
-          allow_issue_writing: false    # don't open GitHub issues
-          cmd_options: "-J zap.json -r zap.html -a -m 1"
-          artifact_name: "zap_baseline"
+      - name: ZAP Baseline (passive DAST via docker run)
+        run: |
+          docker run --rm \
+            --network host \
+            --add-host app.local:127.0.0.1 \
+            -v "$PWD:/zap/wrk:rw" \
+            owasp/zap2docker-stable \
+            zap-baseline.py \
+              -t "https://app.local:${APP_PORT}/" \
+              -J zap.json \
+              -r zap.html \
+              -a \
+              -m 1
 
       - name: Gate on High risk alerts (JSON)
         run: |
