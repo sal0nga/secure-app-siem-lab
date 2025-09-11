@@ -112,6 +112,9 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy.sarif'
+
+      - name: Setup Trivy CLI (for table summary)
+        uses: aquasecurity/setup-trivy@v0.2.1
       
       - name: Trivy (summarize findings as table)
         if: always()
@@ -157,10 +160,26 @@ jobs:
           if [ -z "$PORT" ]; then PORT=8443; fi
           echo "APP_PORT=$PORT" >> "$GITHUB_ENV"
 
+      - name: Generate self-signed TLS cert for app.local
+        run: |
+          mkdir -p ci-certs
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout ci-certs/dev.key \
+            -out ci-certs/dev.crt \
+            -days 1 \
+            -subj "/CN=app.local" \
+            -addext "subjectAltName=DNS:app.local"
+          chmod 0644 ci-certs/dev.key ci-certs/dev.crt
+          ls -l ci-certs
+
       - name: Run app container
         run: |
           docker rm -f app-ci >/dev/null 2>&1 || true
-          docker run -d --name app-ci -p ${APP_PORT}:${APP_PORT} app:ci-${{ github.sha }}
+          docker run -d --name app-ci \
+            -e PORT=${APP_PORT} \
+            -p ${APP_PORT}:${APP_PORT} \
+            -v "$PWD/ci-certs:/opt/certs:ro" \
+            app:ci-${{ github.sha }}
 
       - name: Map app.local to localhost (runner)
         run: |
@@ -224,3 +243,8 @@ jobs:
         if: always()
         run: |
           docker rm -f app-ci >/dev/null 2>&1 || true
+
+      - name: Remove generated TLS certs
+        if: always()
+        run: |
+          rm -rf ci-certs

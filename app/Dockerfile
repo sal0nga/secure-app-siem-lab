@@ -21,13 +21,11 @@ COPY wsgi.py ./wsgi.py
 # Default port for gunicorn binding in compose
 ENV PORT=8443
 EXPOSE 8443
-# Ensure OpenSSL is available in the UBI9 image (needed to generate a self-signed cert)
-RUN microdnf install -y openssl && microdnf clean all
 
-# Dev/CI-only: generate a short-lived self-signed TLS cert for app.local
-RUN mkdir -p /opt/certs && \
-    openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
-      -keyout /opt/certs/dev.key -out /opt/certs/dev.crt \
-      -subj "/CN=app.local"
+ # Prepare app & certs dirs and switch to a non-root user for runtime (satisfies Semgrep)
+RUN mkdir -p /opt/app /opt/certs \
+    && chown -R 1001:0 /opt/app /opt/certs \
+    && chmod -R g=u /opt/app /opt/certs
+USER 1001
 CMD ["sh","-c","exec python -m gunicorn -k gthread --threads ${GTHREADS:-4} --workers ${GWORKERS:-2} --timeout ${GTIMEOUT:-60} --bind 0.0.0.0:${PORT} --keyfile /opt/certs/dev.key --certfile /opt/certs/dev.crt wsgi:app"]
 # Gunicorn command is provided in docker-compose.yml
