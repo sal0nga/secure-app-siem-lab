@@ -216,7 +216,7 @@ jobs:
         if: ${{ always() && steps.build.outcome == 'success' && steps.wait_health.outcome == 'success' }}
         run: |
           docker pull ghcr.io/zaproxy/zaproxy:stable
-          docker run -rm \
+          docker run --rm \
             --network host \
             --add-host app.local:127.0.0.1 \
             -v "$PWD:/zap/wrk:rw" \
