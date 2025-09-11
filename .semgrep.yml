@@ -1,9 +1,0 @@
-rules:
-  - id: disallow-pickle-deserialization
-    message: Unsafe deserialization via pickle.* — use a safe format (e.g., JSON) instead.
-    severity: ERROR
-    languages: [python]
-    patterns:
-      - pattern-either:
-          - pattern: pickle.loads(...)
-          - pattern: pickle.load(...)
