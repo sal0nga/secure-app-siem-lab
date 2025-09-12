@@ -212,6 +212,12 @@ jobs:
         if: ${{ always() && steps.build.outcome == 'success' }}
         run: sudo apt-get update -y && sudo apt-get install -y jq
 
+      - name: Prepare ZAP output dir
+        if: ${{ always() && steps.build.outcome == 'success' && steps.wait_health.outcome == 'success' }}
+        run: |
+          mkdir -p zap-out
+          chmod 777 zap-out
+
       - name: ZAP Baseline (passive DAST via docker run)
         if: ${{ always() && steps.build.outcome == 'success' && steps.wait_health.outcome == 'success' }}
         run: |
@@ -219,7 +225,7 @@ jobs:
           docker run --rm \
             --network host \
             --add-host app.local:127.0.0.1 \
-            -v "$PWD:/zap/wrk:rw" \
+            -v "$PWD/zap-out:/zap/wrk:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
               -t "https://app.local:${APP_PORT}/" \
@@ -229,14 +235,14 @@ jobs:
               -m 1
 
       - name: Gate on High risk alerts (JSON)
-        if: ${{ always() && hashFiles('zap.json') != '' }}
+        if: ${{ always() && hashFiles('zap-out/zap.json') != '' }}
         run: |
           # Count High risk alerts in the JSON report
-          if [ ! -f zap.json ]; then
+          if [ ! -f zap-out/zap.json ]; then
             echo "zap.json not found; check ZAP step output";
             exit 2;
           fi
-          HIGH_COUNT=$(jq '[.site[]?.alerts[]? | select((.riskcode=="3") or (.riskdesc|test("^High")))] | length' zap.json)
+          HIGH_COUNT=$(jq '[.site[]?.alerts[]? | select((.riskcode=="3") or (.riskdesc|test("^High")))] | length' zap-out/zap.json)
           echo "High risk alerts: ${HIGH_COUNT}"
           if [ "$HIGH_COUNT" -gt 0 ]; then
             echo "::error::ZAP found High risk alerts";
@@ -244,13 +250,13 @@ jobs:
           fi
 
       - name: Upload ZAP artifacts (HTML+JSON)
-        if: ${{ always() && (hashFiles('zap.html') != '' || hashFiles('zap.json') != '' ) }}
+        if: ${{ always() && (hashFiles('zap-out/zap.html') != '' || hashFiles('zap-out/zap.json') != '' ) }}
         uses: actions/upload-artifact@v4
         with:
           name: zap-baseline-report
           path: |
-            zap.html
-            zap.json
+            zap-out/zap.html
+            zap-out/zap.json
 
       - name: Stop app container
         if: always()
