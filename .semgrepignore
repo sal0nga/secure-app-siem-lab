@@ -1,0 +1,11 @@
+# bytecode caches
+**/__pycache__/
+
+# bulky evidence + logs (noise)
+evidence/
+logs/
+log/
+
+# non-code artifacts
+docs/
+certs/

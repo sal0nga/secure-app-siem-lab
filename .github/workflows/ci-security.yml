@@ -1,0 +1,269 @@
+name: ci-security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: Pytest (unit)
+    runs-on: ubuntu-latest
+
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: 1
+      PYTHONDONTWRITEBYTECODE: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Run tests
+        run: |
+          # Skip integration tests by default (we'll wire DB/containers later)
+          pytest -m "not integration" --maxfail=1 --disable-warnings
+
+  semgrep:
+    name: Semgrep (High/Critical gate)
+    runs-on: ubuntu-latest
+    needs: [pytest]
+
+    # Run Semgrep from the official container
+    container:
+      image: semgrep/semgrep:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Semgrep scan (all severities) → SARIF
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/python \
+            --sarif --output semgrep.sarif \
+            --severity INFO
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+
+      - name: Semgrep gate (fail on ERROR only)
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/python \
+            --severity ERROR \
+            --error
+
+  trivy:
+    name: "Trivy (image scan: report-only)"
+    runs-on: ubuntu-latest
+    needs: [pytest, semgrep]
+    if: ${{ always() }}  # run even if Semgrep fails
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build app image (local)
+        id: build
+        run: |
+          docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
+
+      - name: Trivy scan (report-only)
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'app:ci-${{ github.sha }}'
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+          format: 'sarif'
+          output: 'trivy.sarif'
+          exit-code: '0'  # report-only; do not fail CI
+
+      - name: Upload Trivy SARIF to GitHub Security
+        if: ${{ always() && hashFiles('trivy.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy.sarif'
+
+      - name: Setup Trivy CLI (for table summary)
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/setup-trivy@v0.2.1
+      
+      - name: Trivy (summarize findings as table)
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        run: |
+          trivy image \
+          --severity HIGH,CRITICAL \
+          --ignore-unfixed \
+          --scanners vuln \
+          --format table app:ci-${{ github.sha }} | tee trivy-table.txt
+
+      - name: Upload Trivy table
+        if: ${{ always() && hashFiles('trivy-table.txt') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-table
+          path: trivy-table.txt
+
+      - name: Upload Trivy SARIF (keep a copy)
+        if: ${{ always() && hashFiles('trivy.sarif') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif
+          path: trivy.sarif
+
+  zap_baseline:
+    name: "ZAP Baseline (fail on High)"
+    runs-on: ubuntu-latest
+    needs: [pytest, semgrep, trivy]
+    if: ${{ always() }}  # run even if earlier jobs failed
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build app image (local)
+        id: build
+        run: |
+          docker build -t app:ci-${{ github.sha }} -f app/Dockerfile .
+
+      - name: Detect app port from Dockerfile (fallback 8443)
+        id: detect_port
+        run: |
+          PORT=$(awk '/^EXPOSE/{for(i=2;i<=NF;i++) if ($i ~ /^[0-9]+$/){print $i; exit}}' app/Dockerfile)
+          if [ -z "$PORT" ]; then PORT=8443; fi
+          echo "APP_PORT=$PORT" >> "$GITHUB_ENV"
+
+      - name: Generate self-signed TLS cert for app.local
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        run: |
+          mkdir -p ci-certs
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout ci-certs/dev.key \
+            -out ci-certs/dev.crt \
+            -days 1 \
+            -subj "/CN=app.local" \
+            -addext "subjectAltName=DNS:app.local"
+          chmod 0644 ci-certs/dev.key ci-certs/dev.crt
+          ls -l ci-certs
+
+      - name: Run app container
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        run: |
+          docker rm -f app-ci >/dev/null 2>&1 || true
+          docker run -d --name app-ci \
+            -e PORT=${APP_PORT} \
+            -p ${APP_PORT}:${APP_PORT} \
+            -v "$PWD/ci-certs:/opt/certs:ro" \
+            app:ci-${{ github.sha }}
+
+      - name: Map app.local to localhost (runner)
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        run: |
+          if ! grep -q "^127.0.0.1[[:space:]]\+app.local" /etc/hosts; then
+            echo "127.0.0.1 app.local" | sudo tee -a /etc/hosts
+          fi
+
+      - name: Wait for health endpoint (HTTPS)
+        id: wait_health
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        run: |
+          for i in {1..30}; do
+            if curl -ksSf --resolve app.local:${APP_PORT}:127.0.0.1 "https://app.local:${APP_PORT}/healthz" >/dev/null; then
+              echo "App is healthy"; exit 0;
+            fi
+            sleep 2;
+          done
+          echo "App did not become healthy in time";
+          docker logs app-ci || true;
+          exit 1
+
+      - name: Install jq
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Prepare ZAP output dir
+        if: ${{ always() && steps.build.outcome == 'success' && steps.wait_health.outcome == 'success' }}
+        run: |
+          mkdir -p zap-out
+          chmod 777 zap-out
+
+      - name: ZAP Baseline (passive DAST via docker run)
+        if: ${{ always() && steps.build.outcome == 'success' && steps.wait_health.outcome == 'success' }}
+        run: |
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          docker run --rm \
+            --network host \
+            --add-host app.local:127.0.0.1 \
+            -v "$PWD/zap-out:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+              -t "https://app.local:${APP_PORT}/healthz" \
+              -J zap.json \
+              -r zap.html \
+              -a \
+              -m 1 || true
+
+      - name: Gate on High risk alerts (JSON)
+        if: ${{ always() && hashFiles('zap-out/zap.json') != '' }}
+        run: |
+          # Count High risk alerts in the JSON report
+          if [ ! -f zap-out/zap.json ]; then
+            echo "zap.json not found; check ZAP step output";
+            exit 2;
+          fi
+          HIGH_COUNT=$(jq '[.site[]?.alerts[]? | select((.riskcode=="3") or (.riskdesc|test("^High")))] | length' zap-out/zap.json)
+          echo "High risk alerts: ${HIGH_COUNT}"
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "::error::ZAP found High risk alerts";
+            exit 1;
+          fi
+
+      - name: Upload ZAP artifacts (HTML+JSON)
+        if: ${{ always() && (hashFiles('zap-out/zap.html') != '' || hashFiles('zap-out/zap.json') != '' ) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: |
+            zap-out/zap.html
+            zap-out/zap.json
+
+      - name: Stop app container
+        if: always()
+        run: |
+          docker rm -f app-ci >/dev/null 2>&1 || true
+
+      - name: Remove generated TLS certs
+        if: always()
+        run: |
+          rm -rf ci-certs
