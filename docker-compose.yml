@@ -68,11 +68,18 @@ services:
 
   fluent-bit:
     image: cr.fluentbit.io/fluent/fluent-bit:2.2
-    command: -c /fluent-bit/etc/fluent-bit.conf
+    command: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
     volumes:
-      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
-      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
-      - ./logs:/logs
+      - ./fluent-bit:/fluent-bit/etc:ro
+      - ./logs:/logs:ro
+      - ./logs/collected:/logs/collected 
+    restart: unless-stopped
+    networks: [backnet]
+
+  syslog-capture:
+    image: alpine:3.20
+    command: ["sh", "-lc", "apk add --no-cache busybox-extras >/dev/null; echo 'listening on 0.0.0.0:5514'; nc -lk -p 5514"]
+    restart: unless-stopped
     networks: [backnet]
 
 volumes:
