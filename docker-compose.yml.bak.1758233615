@@ -69,12 +69,8 @@ services:
   fluent-bit:
     image: cr.fluentbit.io/fluent/fluent-bit:2.2
     command: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
-    environment:
-      LEEF_VENDOR: SecureAppSIEMLab
-      LEEF_PRODUCT: WebApp
-      LEEF_VERSION: "1.0.0"
     volumes:
-      - fb-state:/fluent-bit/state
+      - fb-state:/fluent-bit
       - ./fluent-bit:/fluent-bit/etc:ro
       - ./logs:/logs:ro
       - ./logs/collected:/logs/collected

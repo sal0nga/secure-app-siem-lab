@@ -16,6 +16,11 @@ local function iso8601_from(ts, record_ts)
   end
 end
 
+-- Configurable LEEF header fields (override with env vars)
+local LEEF_VENDOR  = os.getenv("LEEF_VENDOR")  or "YourOrg"
+local LEEF_PRODUCT = os.getenv("LEEF_PRODUCT") or "YourApp"
+local LEEF_VERSION = os.getenv("LEEF_VERSION") or "1.0"
+
 function make_leef(tag, ts, record)
   local sev      = record["sev"] or 5
   local usr      = record["user"] or record["usrName"] or "-"
@@ -26,9 +31,11 @@ function make_leef(tag, ts, record)
 
   local devTime  = iso8601_from(ts, record["ts"])
 
+  local eventId  = record["event_id"] or "100"
+
   local leef = string.format(
     "LEEF:1.0|%s|%s|%s|%s|cat=app|sev=%s|devTime=%s|usrName=%s|src=%s|request=%s|bytesOut=%s|outcome=%s",
-    "ViLab", "WebApp", "1.0", "100",
+    LEEF_VENDOR, LEEF_PRODUCT, LEEF_VERSION, safe(eventId),
     safe(sev), safe(devTime), safe(usr), safe(src), safe(path), safe(bytesOut), safe(outcome)
   )
 
