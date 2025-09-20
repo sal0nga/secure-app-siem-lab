@@ -6,11 +6,21 @@ from jsonschema import validate
 
 SCHEMA = json.loads(Path("app/log_schema.json").read_text())
 
-def _make_token(**claims) -> str:
-    # Any symmetric key works; signature isn't verified in tests (OIDC_VERIFY=false).
-    payload = {"preferred_username": "alice", "sub": "user-123", "amr": ["pwd","otp"]}
-    payload.update(claims)
-    return jwt.encode(payload, key="test-secret", algorithm="HS256")
+def _make_token(realm_access=None, resource_access=None, **extra):
+    import os, time, jwt
+    now = int(time.time())
+    payload = {
+        "sub": "user1",
+        "exp": now + 3600,
+        "iat": now,
+    }
+    if realm_access is not None:
+        payload["realm_access"] = realm_access
+    if resource_access is not None:
+        payload["resource_access"] = resource_access
+    payload.update(extra)
+    secret = os.getenv("OIDC_DEV_HS256_SECRET", "test-secret")
+    return jwt.encode(payload, key=secret, algorithm="HS256")
 
 def _extract_log_lines(captured: str):
     # Each call prints exactly one JSON line; keep only valid JSON objects.

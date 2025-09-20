@@ -1,0 +1,56 @@
+[SERVICE]
+    Flush        1
+    Daemon       off
+    Log_Level    debug
+    Parsers_File /fluent-bit/etc/parsers.conf
+
+# Tail Nginx JSON access logs
+[INPUT]
+    Name             tail
+    Path             /logs/nginx/access.log
+    Tag              nginx
+    Path_Key         source
+    Parser           nginx_json
+    Refresh_Interval 5
+
+# Tail app JSON logs
+[INPUT]
+    Name             tail
+    Path             /logs/app/*.jsonl
+    Parser           json
+    Tag              app
+    Path_Key         source
+    Skip_Long_Lines  On
+    Read_from_Head   On
+    Refresh_Interval 1
+
+[FILTER]
+    Name   lua
+    Match  app
+    script /fluent-bit/etc/make_leef.lua
+    call   make_leef
+
+
+[OUTPUT]
+    Name    stdout
+    Match   app
+    Format  json_lines
+
+[OUTPUT]
+    Name                   syslog
+    Match                  app
+    host                   10.0.0.50
+    port                   514
+    mode                   tcp
+    syslog_format          rfc5424
+    syslog_hostname_preset secure-app
+    syslog_appname_preset  fluent-bit
+    syslog_message_key     leef
+
+# Write everything back to disk as JSON lines (for now)
+[OUTPUT]
+    Name    file
+    Match   *
+    Path    /logs/collected
+    File    collected.log
+    Format  plain
