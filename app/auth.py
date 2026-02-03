@@ -10,6 +10,10 @@ OIDC_AUDIENCE = os.getenv("OIDC_AUDIENCE")   # your client_id
 OIDC_JWKS_URL = os.getenv("OIDC_JWKS_URL")   # e.g., https://.../protocol/openid-connect/certs
 OIDC_VERIFY   = os.getenv("OIDC_VERIFY", "true").lower() not in ("0","false","no")
 
+# Dev verification materials (used only when OIDC_VERIFY is false)
+OIDC_DEV_HS256_SECRET = os.getenv("OIDC_DEV_HS256_SECRET")  # symmetric test secret
+OIDC_DEV_PUBLIC_KEY   = os.getenv("OIDC_DEV_PUBLIC_KEY")    # PEM-encoded RSA/EC public key
+
 _jwks = PyJWKClient(OIDC_JWKS_URL) if OIDC_JWKS_URL else None
 
 def _bearer_token():
@@ -41,7 +45,11 @@ def verify_request_token():
         return
 
     try:
-        if OIDC_VERIFY and _jwks:
+        if OIDC_VERIFY:
+            if not _jwks:
+                # No JWKS configured: cannot verify — treat as authn error
+                g.authn_error = "JWKS URL not configured; cannot verify token"
+                return
             signing_key = _jwks.get_signing_key_from_jwt(token).key
             claims = jwt.decode(
                 token,
@@ -52,8 +60,28 @@ def verify_request_token():
                 options={"require": ["exp", "iat"]}
             )
         else:
-            # Dev/offline mode (signature not verified) — for local plumbing only
-            claims = jwt.decode(token, options={"verify_signature": False})
+            # Dev mode: still verify using a local key/secret instead of disabling verification
+            if OIDC_DEV_HS256_SECRET:
+                claims = jwt.decode(
+                    token,
+                    OIDC_DEV_HS256_SECRET,
+                    algorithms=["HS256"],
+                    audience=OIDC_AUDIENCE,
+                    issuer=OIDC_ISSUER,
+                    options={"require": ["exp", "iat"]}
+                )
+            elif OIDC_DEV_PUBLIC_KEY:
+                claims = jwt.decode(
+                    token,
+                    OIDC_DEV_PUBLIC_KEY,
+                    algorithms=["RS256"],
+                    audience=OIDC_AUDIENCE,
+                    issuer=OIDC_ISSUER,
+                    options={"require": ["exp", "iat"]}
+                )
+            else:
+                g.authn_error = "DEV verification key not set; set OIDC_DEV_HS256_SECRET or OIDC_DEV_PUBLIC_KEY"
+                return
     except InvalidTokenError as e:
         # Mark an authn failure for downstream logging, but don't abort here
         g.authn_error = str(e)

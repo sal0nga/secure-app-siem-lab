@@ -16,17 +16,19 @@ def _extract(out: str):
                 pass
     return evts
 
-def _token_with_admin():
-    return jwt.encode(
-        {
-            "preferred_username": "alice",
-            "sub": "user-123",
-            "realm_access": {"roles": ["admin"]},
-            "amr": ["pwd", "otp"],
-        },
-        key="test",
-        algorithm="HS256",
-    )
+def _token_with_admin(**extra):
+    import os, time, jwt
+    now = int(time.time())
+    payload = {
+        "sub": "admin-user",
+        "realm_access": {"roles": ["admin"]},
+        "resource_access": {"test-client": {"roles": ["admin"]}},
+        "exp": now + 3600,
+        "iat": now,
+    }
+    payload.update(extra)
+    secret = os.getenv("OIDC_DEV_HS256_SECRET", "test-secret")
+    return jwt.encode(payload, key=secret, algorithm="HS256")
 
 def test_role_change_denied_without_token(client, capsys):
     r = client.post("/admin/roles", json={"target_sub": "user-999", "add_roles": ["analyst"]})

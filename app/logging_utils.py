@@ -19,7 +19,7 @@ def is_large_response(n: int | None) -> bool:
     return n is not None and n > threshold
 
 def _now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def _client_ip():
     xff = request.headers.get("X-Forwarded-For")
